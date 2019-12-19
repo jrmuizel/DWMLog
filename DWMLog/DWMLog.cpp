@@ -167,7 +167,11 @@ VOID WINAPI ProcessEvent(PEVENT_RECORD pEvent)
 		}
 		else if (DecodingSourceXMLFile == pInfo->DecodingSource) // Instrumentation manifest
 		{
-			wprintf(L"Event ID: %d\n", pInfo->EventDescriptor.Id);
+			// 44 is ETWGUID_OCCLUSIONEVENT
+			if (pInfo->EventDescriptor.Id != 44) {
+				return;
+			}
+			//wprintf(L"Event ID: %d\n", pInfo->EventDescriptor.Id);
 		}
 		else // Not handling the WPP case
 		{
