@@ -4,7 +4,7 @@
 
 
 #include <iostream>
-
+#include <assert.h>
 
 //Turns the DEFINE_GUID for EventTraceGuid into a const.
 #define INITGUID
@@ -197,6 +197,15 @@ cleanup:
 	}
 }
 
+struct Rect {
+	int32_t z;
+	float left;
+	float top;
+	float right;
+	float bottom;
+};
+Rect GetOCCLUSIONProperties(PEVENT_RECORD pEvent, PTRACE_EVENT_INFO pInfo, USHORT i, LPWSTR pStructureName, USHORT StructIndex);
+
 
 // Callback that receives the events. 
 
@@ -316,6 +325,10 @@ VOID WINAPI ProcessEvent(PEVENT_RECORD pEvent)
 
 		for (USHORT i = 0; i < pInfo->TopLevelPropertyCount; i++)
 		{
+			if (pInfo->EventDescriptor.Id == 44) {
+				Rect r = GetOCCLUSIONProperties(pEvent, pInfo, i, NULL, 0);
+				printf("%f %f %f %f - %d", r.top, r.left, r.bottom, r.left, r.z);
+			}
 			status = PrintProperties(pEvent, pInfo, i, NULL, 0);
 			if (NULL == pUserData)
 			{
@@ -339,6 +352,67 @@ cleanup:
 }
 
 
+
+Rect GetOCCLUSIONProperties(PEVENT_RECORD pEvent, PTRACE_EVENT_INFO pInfo, USHORT i, LPWSTR pStructureName, USHORT StructIndex) {
+	Rect r = {};
+	DWORD status = ERROR_SUCCESS;
+	USHORT ArraySize = 0;
+	DWORD PropertySize = 0;
+	PBYTE pData = NULL;
+
+
+
+	status = GetArraySize(pEvent, pInfo, i, &ArraySize);
+
+	for (USHORT k = 0; k < ArraySize; k++)
+	{
+		LPWSTR PropertyName = (LPWSTR)((PBYTE)(pInfo)+pInfo->EventPropertyInfoArray[i].NameOffset);
+
+		PROPERTY_DATA_DESCRIPTOR DataDescriptors[2];
+		ZeroMemory(&DataDescriptors, sizeof(DataDescriptors));
+
+		ULONG DescriptorsCount = 0;
+		DataDescriptors[0].PropertyName = (ULONGLONG)((PBYTE)(pInfo)+pInfo->EventPropertyInfoArray[i].NameOffset);
+		DataDescriptors[0].ArrayIndex = k;
+		DescriptorsCount = 1;
+		status = TdhGetPropertySize(pEvent, 0, NULL, DescriptorsCount, &DataDescriptors[0], &PropertySize);
+
+		pData = (PBYTE)malloc(PropertySize);
+
+		if (NULL == pData)
+		{
+			wprintf(L"Failed to allocate memory for property data\n");
+		}
+		status = TdhGetProperty(pEvent, 0, NULL, DescriptorsCount, &DataDescriptors[0], PropertySize, pData);
+
+		if (wcscmp(PropertyName, L"z") == 0) {
+			assert(pInfo->EventPropertyInfoArray[i].nonStructType.InType == TDH_INTYPE_INT32);
+			LONG z = *(PLONG)pData;
+			r.z = z;
+		} else if (wcscmp(PropertyName, L"top") == 0) {
+			assert(pInfo->EventPropertyInfoArray[i].nonStructType.InType == TDH_INTYPE_FLOAT);
+			FLOAT top = *(PFLOAT)pData;
+			r.top = top;
+		} else if (wcscmp(PropertyName, L"left") == 0) {
+			assert(pInfo->EventPropertyInfoArray[i].nonStructType.InType == TDH_INTYPE_FLOAT);
+			FLOAT left = *(PFLOAT)pData;
+			r.left = left;
+		}
+		else if (wcscmp(PropertyName, L"right") == 0) {
+			assert(pInfo->EventPropertyInfoArray[i].nonStructType.InType == TDH_INTYPE_FLOAT);
+			FLOAT right = *(PFLOAT)pData;
+			r.right = right;
+		}
+		else if (wcscmp(PropertyName, L"bottom") == 0) {
+			assert(pInfo->EventPropertyInfoArray[i].nonStructType.InType == TDH_INTYPE_FLOAT);
+			FLOAT bottom = *(PFLOAT)pData;
+			r.bottom = bottom;
+		}
+		free(pData);
+	}
+	return r;
+}
+
 // Print the property.
 DWORD PrintProperties(PEVENT_RECORD pEvent, PTRACE_EVENT_INFO pInfo, USHORT i, LPWSTR pStructureName, USHORT StructIndex)
 {
@@ -357,7 +431,8 @@ DWORD PrintProperties(PEVENT_RECORD pEvent, PTRACE_EVENT_INFO pInfo, USHORT i, L
 
 	for (USHORT k = 0; k < ArraySize; k++)
 	{
-		wprintf(L"%*s%s: ", (pStructureName) ? 4 : 0, L"", (LPWSTR)((PBYTE)(pInfo)+pInfo->EventPropertyInfoArray[i].NameOffset));
+		LPWSTR PropertyName = (LPWSTR)((PBYTE)(pInfo)+pInfo->EventPropertyInfoArray[i].NameOffset);
+		wprintf(L"%*s%s: ", (pStructureName) ? 4 : 0, L"", PropertyName);
 
 		// If the property is a structure, print the members of the structure.
 
