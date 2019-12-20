@@ -43,33 +43,89 @@ DWORD GetArraySize(PEVENT_RECORD pEvent, PTRACE_EVENT_INFO pInfo, USHORT i, PUSH
 DWORD GetMapInfo(PEVENT_RECORD pEvent, LPWSTR pMapName, DWORD DecodingSource, PEVENT_MAP_INFO& pMapInfo);
 void RemoveTrailingSpace(PEVENT_MAP_INFO pMapInfo);
 
+struct EventTraceProperties {
+	EVENT_TRACE_PROPERTIES props;
+	char sessionNameBuffer[1024];
+};
+
+static BOOL WINAPI StaticBufferEventCallback(PEVENT_TRACE_LOGFILE buf)
+{
+	std::cout << "StaticBufferEventCallback" << std::endl << std::endl;
+	return TRUE;
+}
+
 void wmain(void)
 {
 	TDHSTATUS status = ERROR_SUCCESS;
-	EVENT_TRACE_LOGFILE trace;
+
+	static const GUID myGuid =
+	{ 0x10101010, 0x2345, 0xabcd, { 0xAA, 0x22, 0x71, 0x00, 0x00, 0x00, 0x08, 0xFF } };
+	std::string mySessionName = "aaaaaaa";
+	DWORD dwEnableFlags = 0;
+
+	EVENT_TRACE_LOGFILEA trace = { };
+	trace.LoggerName = (char*)mySessionName.c_str();
+	trace.EventRecordCallback = (PEVENT_RECORD_CALLBACK)(ProcessEvent);
+	trace.BufferCallback = (PEVENT_TRACE_BUFFER_CALLBACKA)(StaticBufferEventCallback);
+	trace.ProcessTraceMode = PROCESS_TRACE_MODE_EVENT_RECORD | PROCESS_TRACE_MODE_REAL_TIME;
 	TRACE_LOGFILE_HEADER* pHeader = &trace.LogfileHeader;
 
-	// Identify the log file from which you want to consume events
-	// and the callbacks used to process the events and buffers.
 
-	ZeroMemory(&trace, sizeof(EVENT_TRACE_LOGFILE));
-	trace.LogFileName = (LPWSTR)LOGFILE_PATH;
-	trace.EventRecordCallback = (PEVENT_RECORD_CALLBACK)(ProcessEvent);
-	trace.ProcessTraceMode = PROCESS_TRACE_MODE_EVENT_RECORD;
 
-	g_hTrace = OpenTrace(&trace);
+	EventTraceProperties prop = {};
+	prop.props.Wnode.BufferSize = sizeof(prop);
+	prop.props.Wnode.Guid = myGuid;
+	prop.props.Wnode.ClientContext = 1;
+	prop.props.Wnode.Flags = WNODE_FLAG_TRACED_GUID;
+	prop.props.LogFileMode = EVENT_TRACE_REAL_TIME_MODE;
+	prop.props.LogFileNameOffset = 0;
+	prop.props.LoggerNameOffset = offsetof(EventTraceProperties, sessionNameBuffer);
+	prop.props.FlushTimer = 1;
+	prop.props.EnableFlags = dwEnableFlags;
+
+	memcpy(prop.sessionNameBuffer, mySessionName.c_str(), mySessionName.size() + 1);
+	::ControlTraceA(0, mySessionName.c_str(), &prop.props, EVENT_TRACE_CONTROL_STOP);
+
+	TRACEHANDLE handle;
+	status = ::StartTraceA(&handle, mySessionName.c_str(), &prop.props);
+
+	// Microsoft-Windows-Dwm-Core {9E9BBA3C-2E38-40CB-99F4-9E8281425164}
+
+	static const GUID DwmCoreProvider = {
+	0x9E9BBA3C, 0x2E38, 0x40CB, { 0x99, 0xf4, 0x9e, 0x82, 0x81, 0x42, 0x51, 0x64 }
+	};
+
+	std::cout << "StartTrace: " << status << std::endl;
+	if (ERROR_ALREADY_EXISTS == status) {
+		std::cout << "already exists" << std::endl;
+	}
+	else if (status != ERROR_SUCCESS) {
+		std::cout << "error" << std::endl;
+	}
+	else {
+		status = ::EnableTrace(true, 0xffffffff, TRACE_LEVEL_VERBOSE, &DwmCoreProvider, handle);
+		std::cout << "EnableTrace: " << status << std::endl;
+	}
+
+	g_hTrace = OpenTraceA(&trace);
 	if (INVALID_PROCESSTRACE_HANDLE == g_hTrace)
 	{
 		wprintf(L"OpenTrace failed with %lu\n", GetLastError());
+		auto lastError = GetLastError();
+
+		switch (lastError) {
+		case ERROR_FILE_NOT_FOUND:    fprintf(stderr, " (file not found)"); break;
+		case ERROR_PATH_NOT_FOUND:    fprintf(stderr, " (path not found)"); break;
+		case ERROR_INVALID_PARAMETER: fprintf(stderr, " (Logfile is NULL)"); break;
+		case ERROR_BAD_PATHNAME:      fprintf(stderr, " (invalid LoggerName)"); break;
+		case ERROR_ACCESS_DENIED:     fprintf(stderr, " (access denied)"); break;
+		default:                      fprintf(stderr, " (error=%u)", lastError); break;
+		}
 		goto cleanup;
 	}
 
-	g_bUserMode = pHeader->LogFileMode & EVENT_TRACE_PRIVATE_LOGGER_MODE;
 
-	if (pHeader->TimerResolution > 0)
-	{
-		g_TimerResolution = pHeader->TimerResolution / 10000;
-	}
+
 
 	wprintf(L"Number of events lost:  %lu\n", pHeader->EventsLost);
 
@@ -167,8 +223,10 @@ VOID WINAPI ProcessEvent(PEVENT_RECORD pEvent)
 		}
 		else if (DecodingSourceXMLFile == pInfo->DecodingSource) // Instrumentation manifest
 		{
+			// 43 is ETWGUID_OCCLUSIONEVENTStart
 			// 44 is ETWGUID_OCCLUSIONEVENT
-			if (pInfo->EventDescriptor.Id != 44) {
+			// 45 is ETWGUID_OCCLUSIONEVENTStop
+			if (pInfo->EventDescriptor.Id != 43 && pInfo->EventDescriptor.Id != 45) {
 				return;
 			}
 			//wprintf(L"Event ID: %d\n", pInfo->EventDescriptor.Id);
